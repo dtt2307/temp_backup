@@ -11,7 +11,7 @@ jobs:
         command: |
             aws cloudformation deploy \
               --template-file ./network.yml \
-              --tags project=veeam-backup \
+              --tags project=veeam-CPAD \
               --region us-east-1 \
               --stack-name "veeam-backup-${CIRCLE_WORKFLOW_ID:0:7}" \
               --parameter-overrides ID="${CIRCLE_WORKFLOW_ID:0:7}"  
@@ -22,12 +22,13 @@ jobs:
    steps:
      - checkout
      - run:
-        name: Create Network Infrastrucuture
+        name: Create s3
         command: |
             aws cloudformation deploy \
               --template-file ./s3.yml \
-              --tags project=veeam-backup \
+              --tags project=veeam-CPAD \
               --region us-east-1 \
+              --capabilities CAPABILITY_NAMED_IAM \
               --stack-name "veeam-backup-${CIRCLE_WORKFLOW_ID:0:7}" \
               --parameter-overrides ID="${CIRCLE_WORKFLOW_ID:0:7}"            
 workflows:
