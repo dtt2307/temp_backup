@@ -34,7 +34,7 @@ workflows:
  default:
   jobs:
     - deploy_Network
-    - deplot_s3     
+    - deploy_s3     
            
     
                                                                                                                                                                                                                                                                
