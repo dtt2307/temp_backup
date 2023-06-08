@@ -7,7 +7,7 @@ Parameters:
     EnvironmentName:
         Description: An environment name that will be prefixed to resource names
         Type: String
-        default: veeam-CPAD   
+        Default: veeam-CPAD   
 Resources:
   S3AccessEC2:
     Type: 'AWS::IAM::Role'
