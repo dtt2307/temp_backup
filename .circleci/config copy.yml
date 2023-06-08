@@ -1,0 +1,203 @@
+version: 2.1
+jobs:
+  deploy_Network:
+   docker:
+     - image: amazon/aws-cli
+      # Docker image here that supports AWS CLI
+   steps:
+     - checkout
+     - run:
+        name: Create Network Infrastrucuture
+        command: |
+            aws cloudformation deploy \
+              --template-file .circleci/files/network.yml \
+              --tags project=veeam-backup \
+              --region us-east-1 \
+              --stack-name "veeam-backup-${CIRCLE_WORKFLOW_ID:0:7}" \
+              --parameter-overrides ID="${CIRCLE_WORKFLOW_ID:0:7}"             
+     - run:
+        name: Ensure front-end infrastructure exist
+        command: |
+            aws cloudformation deploy \
+              --template-file .circleci/files/frontend.yml \
+              --tags project=udapeople \
+              --region us-east-1 \
+              --stack-name "udapeople-frontend-${CIRCLE_WORKFLOW_ID:0:7}" \
+              --parameter-overrides ID="${CIRCLE_WORKFLOW_ID:0:7}"             
+     - run:
+        name: Add back-end ip to ansible inventory
+        command: |
+            BACKEND_AWS_PUBLIC_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=backend-${CIRCLE_WORKFLOW_ID:0:7}" \
+              --query 'Reservations[*].Instances[*].PublicIpAddress' \
+              --output text)
+            echo "$BACKEND_AWS_PUBLIC_IP" >> .circleci/ansible/inventory.txt
+            cat .circleci/ansible/inventory.txt
+            echo "http://$BACKEND_AWS_PUBLIC_IP:3030" >> .circleci/outputs/backend_url.txt
+            cat .circleci/outputs/backend_url.txt
+     - run: yum -y install tar gzip     
+     - persist_to_workspace:
+        root: ~/
+        paths:
+          - project/.circleci/ansible/inventory.txt
+          - project/.circleci/outputs/backend_url.txt
+      # Here's where you will add some code to rollback on failure      
+  configure_infrastructure:
+    docker:
+      # Docker image here that supports Ansible
+      - image: python:3.7-alpine3.11        
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints: ["ed:3a:a0:59:60:8b:06:7f:02:f4:d7:6a:63:ff:6c:27"]
+      # attach workspace
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update tar gzip zip 
+            apk add --no-cache python3 py3-pip && pip3 install --upgrade pip && pip3 install --no-cache-dir awscli
+            rm -rf /var/cache/apk/*
+            apk add --update ansible           
+      - run:
+          name: Configure server
+          command: |
+            cd .circleci/ansible            
+            cat inventory.txt          
+            ansible-playbook -vvv -i inventory.txt configure-server.yml        
+  deploy-frontend:
+    docker:
+      - image: python:3.7-alpine3.11
+    steps:
+      - checkout
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update curl nodejs npm
+            pip install awscli
+      - run:
+          name: Get backend url
+          command: |
+            cat .circleci/outputs/backend_url.txt >> frontend/.env
+            cat frontend/.env
+            export API_URL=$(cat frontend/.env)
+            echo "${API_URL}"
+            cd frontend
+            npm install
+            npm run build
+      - run:
+          name: Deploy frontend objects
+          command: |
+            cd frontend
+            #npm install
+            #npm run build
+            tar -czvf artifact-"${CIRCLE_WORKFLOW_ID:0:7}".tar.gz dist
+            echo ${CIRCLE_WORKFLOW_ID:0:7}
+            aws s3 cp dist s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --recursive      
+  deploy-backend:
+    docker:
+      - image: python:3.7-alpine3.11
+        environment:
+          ENVIRONMENT: production
+          TYPEORM_CONNECTION: postgres
+          TYPEORM_HOST: database-1.crxy0cbhkjib.us-east-1.rds.amazonaws.com
+          TYPEORM_USERNAME: postgres
+          TYPEORM_PASSWORD: mypassword
+          TYPEORM_DATABASE: udapeople
+          TYPEORM_PORT: 5432
+          TYPEORM_ENTITIES: ./src/modules/domain/**/*.entity{.ts,.js}       
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints: ["ed:3a:a0:59:60:8b:06:7f:02:f4:d7:6a:63:ff:6c:27"]
+      # attach workspace
+      - attach_workspace:
+          at: ~/      
+      - run:
+         name: Install dependencies
+         command: |
+          apk add --update ansible curl rsync openssh nodejs npm zip
+          ansible --version
+          pip install awscli
+          aws --version
+      - run:
+         name: Deploy backend
+         command: |
+           cd backend
+           npm i
+           npm run build
+           cd ..
+           tar -C backend -cvzf artifact.tar.gz .
+           cp -p artifact.tar.gz .circleci/ansible/
+           tar -xvf artifact.tar.gz
+           ls -la
+           cd .circleci/ansible
+           echo "Contents of the inventory.txt file is -----"
+           cat inventory.txt
+           ansible-playbook -i inventory.txt deploy-backend.yml      
+  smoke-test:
+    docker:
+      - image: python:3.7-alpine3.11
+    steps:
+      - checkout
+      - attach_workspace:
+         at: ~/      
+      - run:
+         name: Install dependencies
+         command: |
+           apk add --update curl
+           pip install awscli
+      - run:
+         name: Frontend smoke test.
+         command: |
+          URL="http://udapeople-${CIRCLE_WORKFLOW_ID:0:7}.s3-website-us-east-1.amazonaws.com"            
+          echo ${URL} 
+          if curl -s ${URL} | grep "Welcome"
+          then      
+              return 0
+          else
+              return 1
+          fi
+      - run:
+         name: Backend smoke test.
+         command: |
+           API_URL=$(cat .circleci/outputs/backend_url.txt)
+           echo $API_URL
+           if curl $API_URL/api/status | grep "ok"
+           then
+               return 0
+           else
+               return 1
+           fi      
+workflows:
+ default:
+  jobs:
+    - build-frontend        
+    - build-backend        
+    - test-frontend:
+        requires: [build-frontend]        
+    - test-backend:
+        requires: [build-backend]        
+    - scan-backend:
+        requires: [build-backend]        
+    - scan-frontend:
+        requires: [build-frontend]        
+    - deploy_infrastructure:
+        requires: [test-frontend, test-backend, scan-frontend, scan-backend]             
+    - configure_infrastructure:
+        requires:
+          - deploy_infrastructure
+    - deploy-frontend:
+        requires:
+          - configure_infrastructure
+    - deploy-backend:
+        requires:
+          - configure_infrastructure        
+    - smoke-test:
+        requires:
+          - deploy-frontend
+          - deploy-backend        
+                                                                                                                                                                                                                                                               

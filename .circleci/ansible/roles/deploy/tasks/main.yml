@@ -1,0 +1,33 @@
+---
+- name: "Creates backend directory"
+  become: true
+  file:
+    path: ~/backend
+    state: directory
+
+- name: "Copy compiled backend app"
+  become: true
+  copy:
+    src: artifact.tar.gz
+    dest: "~/backend/artifact.tar.gz"
+
+- name: "Unzip backend files to correct directory"
+  become: true
+  shell: |
+    cd ~/backend
+    tar -xvf artifact.tar.gz
+    ls .
+    rm -rf artifact.tar.gz
+- name: "Install dependencies for project"
+  become: true
+  shell: |
+    cd ~/backend
+    ls .
+    npm install -g npm-install-peers
+    npm i -g pm2   
+- name: "start npm"
+  become: true
+  shell: |
+    cd ~/backend
+    pm2 start npm -- start > /dev/null
+    sleep 30
